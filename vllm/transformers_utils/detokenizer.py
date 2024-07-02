@@ -1,8 +1,8 @@
-from typing import Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from vllm.sequence import Logprob, SamplingParams, Sequence, SequenceGroup
+from vllm.sequence import SamplingParams, Sequence, SequenceGroup
 from vllm.transformers_utils.tokenizer_group.base_tokenizer_group import (
     BaseTokenizerGroup)
 
@@ -21,70 +21,19 @@ class Detokenizer:
         """Returns the HF tokenizer to use for a given sequence."""
         return self.tokenizer_group.get_lora_tokenizer(sequence.lora_request)
 
-    def decode_prompt_logprobs_inplace(
-            self, seq_group: SequenceGroup,
-            prompt_logprobs: List[Optional[Dict[int, Logprob]]]) -> None:
-        """Decodes the logprobs for the prompt of a sequence group.
+    def decode_prompt_logprobs_inplace(self, seq_group: SequenceGroup) -> None:
+        """Decode the tokens of a list of PromptLogprobs.
 
         Args:
-            seq_group: The sequence group to decode.
-            prompt_logprobs: The logprobs to decode.
-        
-        Returns:
-            The prompt logprobs with the decoded tokens.
+            prompt_logprobs: The prompt logprobs to decode.
         """
-        prms = seq_group.sampling_params
-        # We can pick any sequence for the prompt.
-        seq = next(iter(seq_group.seqs_dict.values()))
-        # Only prompt, without the generated token.
-        all_token_ids = seq.get_token_ids()
-        prompt_token_ids = all_token_ids[:-1]
-        tokenizer = self.get_tokenizer_for_seq(seq)
-        prefix_offset = 0
-        read_offset = 0
-        next_iter_prefix_offset = 0
-        next_iter_read_offset = 0
-        next_iter_tokens: List[str] = []
-        prev_tokens = None
-
-        for token_position, prompt_logprobs_for_token in enumerate(
-                prompt_logprobs):
-            if not prompt_logprobs_for_token:
+        tokenizer = self.get_tokenizer_for_seq(seq_group.get_seqs()[0])
+        for logprobs in seq_group.prompt_logprobs:
+            if not logprobs:
                 continue
-            for token_id, sample_logprob in prompt_logprobs_for_token.items():
-                if (sample_logprob.decoded_token is None
-                        and token_id != INVALID_TOKEN_ID):
-                    prompt_token_ids_with_token = (
-                        prompt_token_ids[:token_position] + [token_id])
-                    (new_tokens, new_text, new_prefix_offset,
-                     new_read_offset) = detokenize_incrementally(
-                         tokenizer=tokenizer,
-                         all_input_ids=prompt_token_ids_with_token,
-                         prev_tokens=prev_tokens,
-                         prefix_offset=prefix_offset,
-                         read_offset=read_offset,
-                         skip_special_tokens=prms.skip_special_tokens,
-                         spaces_between_special_tokens=prms.
-                         spaces_between_special_tokens,
-                     )
-
-                    sample_logprob.decoded_token = new_text
-
-                    # Use the offsets & prev tokens corresponding to
-                    # real tokens to ensure detokenization is consistent
-                    # actual with prompt.
-                    if token_id == all_token_ids[token_position]:
-                        next_iter_prefix_offset = new_prefix_offset
-                        next_iter_read_offset = new_read_offset
-                        next_iter_tokens = new_tokens
-
-            # Advance to the next token position.
-            prefix_offset = next_iter_prefix_offset
-            read_offset = next_iter_read_offset
-            if prev_tokens is None:
-                prev_tokens = next_iter_tokens
-            else:
-                prev_tokens.extend(next_iter_tokens)
+            for token_id, logprob in logprobs.items():
+                logprob.decoded_token = tokenizer.decode(
+                    token_id, seq_group.sampling_params.skip_special_tokens)
 
     def decode_sequence_inplace(self, seq: Sequence,
                                 prms: SamplingParams) -> int:

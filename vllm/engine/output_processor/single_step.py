@@ -61,14 +61,15 @@ class SingleStepOutputProcessor(SequenceGroupOutputProcessor):
         output = outputs[0]
         prompt_logprobs = output.prompt_logprobs
         if prompt_logprobs is not None:
-            if seq_group.sampling_params.detokenize and self.detokenizer:
-                self.detokenizer.decode_prompt_logprobs_inplace(
-                    seq_group, prompt_logprobs)
             if not seq_group.prompt_logprobs:
                 # The first prompt token's logprob is None because it doesn't
                 # have tokens that are precedent.
                 seq_group.prompt_logprobs = [None]
             seq_group.prompt_logprobs.extend(prompt_logprobs)
+
+            if (seq_group.sampling_params.detokenize and self.detokenizer
+                    and seq_group.get_num_uncomputed_tokens() == 0):
+                self.detokenizer.decode_prompt_logprobs_inplace(seq_group)
 
     def _process_sequence_group_outputs(self, seq_group: SequenceGroup,
                                         outputs: SequenceGroupOutput) -> None:
